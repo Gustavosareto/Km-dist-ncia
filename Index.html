@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#0b6b46">
+<title>Km das entregas</title>
+<style>
+:root{--bg:#f3f5f2;--card:#fff;--tx:#15201b;--mut:#5f6e66;--ac:#0b6b46;--on:#fff;--bd:#d9dfda;--err:#b42318}
+@media(prefers-color-scheme:dark){:root{--bg:#0e1411;--card:#17201b;--tx:#edf3ef;--mut:#93a39a;--ac:#3ddc97;--on:#06281a;--bd:#27342d;--err:#ff8a7a}}
+*{box-sizing:border-box}
+body{margin:0;padding:16px;max-width:520px;margin-inline:auto;background:var(--bg);color:var(--tx);font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+h1{font-size:1.5rem;margin:8px 0 4px;letter-spacing:-.01em}
+p.sub{margin:0 0 16px;color:var(--mut)}
+section{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:14px;margin-bottom:12px}
+label{display:block;font-size:.9rem;color:var(--mut);margin:10px 0 4px}
+input[type=text]{width:100%;padding:12px;border:1px solid var(--bd);border-radius:10px;background:var(--bg);color:var(--tx);font:inherit}
+input:focus-visible,button:focus-visible,.file:focus-within{outline:3px solid var(--ac);outline-offset:2px}
+.btn{display:block;width:100%;padding:14px;border:0;border-radius:12px;background:var(--ac);color:var(--on);font:600 1rem inherit;text-align:center;cursor:pointer}
+.btn:disabled{opacity:.6}
+.file{position:relative}
+.file input{position:absolute;inset:0;opacity:0;width:100%;height:100%;cursor:pointer}
+#st{min-height:1.4em;margin:8px 0 0;color:var(--mut);font-size:.9rem}
+#st.err{color:var(--err)}
+.leg{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--bd)}
+.leg small{display:block;color:var(--mut)}
+.leg b{white-space:nowrap}
+.total{display:flex;justify-content:space-between;align-items:baseline;padding-top:12px}
+.total b{font-size:2rem;letter-spacing:-.02em}
+@media(prefers-reduced-motion:no-preference){button{transition:opacity .15s}}
+</style>
+</head>
+<body>
+<h1>Km das entregas</h1>
+<p class="sub">Envie o print do app de entregas. Eu leio os endereços e somo os km.</p>
+
+<section>
+  <div class="file">
+    <div class="btn">Enviar print ou foto da tela</div>
+    <input id="img" type="file" accept="image/*" aria-label="Enviar print ou foto da tela">
+  </div>
+  <p id="ocr" class="sub" style="margin:8px 0 0"></p>
+</section>
+
+<section>
+  <label for="city">Cidade (ajuda a achar a rua certa)</label>
+  <input id="city" type="text" placeholder="Ex.: Porto Alegre, RS" autocomplete="off">
+  <label for="a0">Entrega 1</label><input class="addr" id="a0" type="text" placeholder="Rua, número, bairro">
+  <label for="a1">Entrega 2</label><input class="addr" id="a1" type="text" placeholder="Rua, número, bairro">
+  <label for="a2">Entrega 3 (opcional)</label><input class="addr" id="a2" type="text" placeholder="Rua, número, bairro">
+  <p id="st" role="status"></p>
+  <button id="go" class="btn" style="margin-top:8px">Calcular km</button>
+</section>
+
+<section id="res" hidden></section>
+
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
+<script>
+const $ = s => document.querySelector(s);
+const wait = ms => new Promise(r => setTimeout(r, ms));
+const inputs = [...document.querySelectorAll('.addr')];
+const ADDR = /\b(rua|r\.|av\.?|avenida|travessa|tv\.?|alameda|al\.|estrada|rodovia|pra[cç]a|beco|largo|servid[aã]o)\s.*\d/i;
+const km = m => (m / 1000).toFixed(1).replace('.', ',') + ' km';
+const perm = a => a.length < 2 ? [a] : a.flatMap((x, i) => perm([...a.slice(0, i), ...a.slice(i + 1)]).map(p => [x, ...p]));
+
+function status(msg, err) { const s = $('#st'); s.textContent = msg; s.className = err ? 'err' : ''; }
+
+try { $('#city').value = localStorage.getItem('city') || ''; } catch (e) {}
+$('#city').addEventListener('change', () => { try { localStorage.setItem('city', $('#city').value.trim()); } catch (e) {} });
+
+$('#img').addEventListener('change', async e => {
+  const f = e.target.files[0]; if (!f) return;
+  const o = $('#ocr'); o.textContent = 'Lendo a imagem… 0%';
+  try {
+    const { data } = await Tesseract.recognize(f, 'por', {
+      logger: m => { if (m.status === 'recognizing text') o.textContent = 'Lendo a imagem… ' + Math.round(m.progress * 100) + '%'; }
+    });
+    const found = [...new Set(data.text.split('\n')
+      .map(l => l.replace(/[|•_]/g, ' ').replace(/\s+/g, ' ').trim())
+      .filter(l => ADDR.test(l)))].slice(0, 3);
+    inputs.forEach((inp, i) => inp.value = found[i] || '');
+    o.textContent = found.length
+      ? found.length + ' endereço(s) encontrado(s). Confira abaixo antes de calcular.'
+      : 'Não achei endereços na imagem. Digite abaixo ou tente outro print.';
+  } catch (err) { o.textContent = 'Não consegui ler a imagem. Tente de novo ou digite os endereços.'; }
+  e.target.value = '';
+});
+
+$('#go').addEventListener('click', async () => {
+  const addrs = inputs.map(i => i.value.trim()).filter(Boolean);
+  if (!addrs.length) return status('Digite ou envie pelo menos um endereço.', true);
+  const city = $('#city').value.trim();
+  const btn = $('#go'); btn.disabled = true; $('#res').hidden = true;
+  try {
+    status('Pegando sua localização…');
+    const pos = await new Promise((ok, no) => navigator.geolocation.getCurrentPosition(ok, no, { enableHighAccuracy: true, timeout: 15000 }));
+    const pts = [[pos.coords.longitude, pos.coords.latitude]];
+    for (let i = 0; i < addrs.length; i++) {
+      status('Buscando endereço ' + (i + 1) + ' de ' + addrs.length + '…');
+      const q = encodeURIComponent(addrs[i] + (city ? ', ' + city : '') + ', Brasil');
+      const r = await (await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&accept-language=pt-BR&q=' + q)).json();
+      if (!r.length) throw new Error('Não achei "' + addrs[i] + '". Corrija o endereço (inclua o bairro) e calcule de novo.');
+      pts.push([+r[0].lon, +r[0].lat]);
+      if (i < addrs.length - 1) await wait(1100);
+    }
+    status('Calculando as distâncias…');
+    const url = 'https://router.project-osrm.org/table/v1/driving/' + pts.map(p => p.join(',')).join(';') + '?annotations=distance';
+    const d = (await (await fetch(url)).json()).distances;
+    if (!d || d.flat().some(v => v == null)) throw new Error('Não achei rota entre esses pontos. Confira os endereços.');
+    let best = null;
+    for (const p of perm(addrs.map((_, i) => i + 1))) {
+      const path = [0, ...p]; let t = 0;
+      for (let k = 0; k < path.length - 1; k++) t += d[path[k]][path[k + 1]];
+      if (!best || t < best.t) best = { t, path };
+    }
+    const names = ['Você', ...addrs];
+    let h = '';
+    for (let k = 0; k < best.path.length - 1; k++) {
+      const a = best.path[k], b = best.path[k + 1];
+      h += '<div class="leg"><span>' + esc(names[b]) + '<small>' + (k ? 'saindo de ' + esc(names[a]) : 'saindo da sua localização') + '</small></span><b>' + km(d[a][b]) + '</b></div>';
+    }
+    h += '<div class="total"><span>Total</span><b>' + km(best.t) + '</b></div>';
+    if (addrs.length > 1) h = '<p class="sub" style="margin:0 0 6px">Melhor ordem, a mais curta:</p>' + h;
+    $('#res').innerHTML = h; $('#res').hidden = false; status('');
+  } catch (err) {
+    status(err.code === 1 ? 'Permita o acesso à localização no navegador.' : (err.message || 'Algo deu errado. Tente de novo.'), true);
+  }
+  btn.disabled = false;
+});
+
+function esc(s) { return s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+</script>
+</body>
+</html>
